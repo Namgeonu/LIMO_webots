@@ -1,0 +1,37 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/floors/protos/RectangleArena.proto"
+EXTERNPROTO "../protos/LimoFourDiff.proto"
+
+WorldInfo {
+  info [
+    "LIMO 단독 검증 월드: 10x10 m 아레나에 LimoFourDiff 한 대"
+    "라이다는 AgileX 공식 높이(지면 위 0.111 m). 드라이버는 limo.launch.py (webots_ros2_driver + ros2_control + Nav2)"
+  ]
+  title "LIMO webots (single)"
+  basicTimeStep 2
+}
+Viewpoint {
+  orientation 0.028229702261606218 0.9978139463222574 0.05975292825480734 0.3367161913867963
+  position -12.58493340641843 -0.5458561833681006 4.805308621499152
+}
+TexturedBackground {
+}
+TexturedBackgroundLight {
+}
+RectangleArena {
+  floorSize 10 10
+  floorTileSize 1 1
+  wallHeight 0.05
+}
+LimoFourDiff {
+  translation -3 0 0.145
+  name "limo"
+}
+Robot {
+  name "Ros2Supervisor"
+  controller "<extern>"
+  supervisor TRUE
+}

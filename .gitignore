@@ -1,0 +1,11 @@
+# 파이썬 캐시
+__pycache__/
+*.pyc
+
+# Webots 가 만드는 것
+*.wbproj
+worlds/.*.jpg
+
+# 로그
+*.log
+logs/

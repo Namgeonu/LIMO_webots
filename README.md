@@ -46,15 +46,6 @@ LIMO_webots/
 └── config/                   limo_nav2_params.yaml, limo_ros2control.yaml
 ```
 
-## 모델 메모
-
-- 로봇 모델은 AgileX 공식 Gazebo `limo_four_diff` 를 기준으로 한다. 라이다는 지면 위 0.111 m
-  (`base_link` 기준 z=−0.034), 최소 거리 0.3 m.
-- 라이다 값은 proto(실제 광선 위치)와 URDF(스캔을 해석하는 TF) **두 곳이 반드시 같아야 한다.**
-  한쪽만 바꾸면 costmap 에 장애물이 엉뚱한 높이로 찍히거나 전부 폐기된다.
-- `gt_odom.py` 는 GPS + InertialUnit 으로 지상 진실 `odom` 과 `odom→base_link` TF 를 낸다
-  (`base_link` 는 지면 위 0.145 m, `base_footprint` 는 그 아래 −0.145).
-
 ## 로봇을 더 놓으려면
 
 월드에 `LimoFourDiff { name "limo_b" ... }` 를 추가하고 `ros2 launch ... robots:=limo,limo_b` 로

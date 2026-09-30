@@ -8,7 +8,18 @@
                 <enabled>true</enabled>
             </ros>
         </device>
-        <plugin type="webots_ros2_control::Ros2Control"/>
+        <!-- 바퀴 구동: cmd_vel(vx, vy, wz) -> 메카넘 IK -> 모터 4개 (controllers/mecanum_driver.py).
+             기존 webots_ros2_control + diff_drive_controller 두 층을 대체한다.
+             속도 상한은 실물 펌웨어의 제한을 흉내 내는 안전장치. Nav2 MPPI 의 vx/vy/wz_max 보다
+             같거나 크게 두어, 평소에는 Nav2 가 먼저 속도를 제한하게 한다. -->
+        <plugin type="mecanum_driver.MecanumDriver">
+            <maxVx>0.3</maxVx>
+            <maxVy>0.2</maxVy>
+            <maxWz>1.5</maxWz>
+            <cmdTimeout>0.5</cmdTimeout>
+            <jointStateRate>50</jointStateRate>
+        </plugin>
+        <!-- 위치 추정: GPS + InertialUnit 진실값 -> /odom + odom->base_link TF (controllers/gt_odom.py) -->
         <plugin type="gt_odom.GTOdom"/>
     </webots>
 
@@ -34,14 +45,17 @@
     <link name="laser_link"/>
     <!-- 라이다 높이: base_link(지면 위 0.145) 기준 z=-0.034 → 지면 위 0.111 m.
          AgileX 공식 Gazebo(limo_four_diff.xacro) 의 laser 위치와 동일하다.
-         protos/LimoFourDiff.proto 의 라이다 Solid translation 과 반드시 같아야 한다. -->
+         protos/LimoMecanum.proto 의 라이다 Solid translation 과 반드시 같아야 한다. -->
     <joint name="laser_joint" type="fixed">
         <parent link="base_link"/>
         <child link="laser_link"/>
         <origin xyz="0.103 0 -0.034" rpy="0 0 0"/>
     </joint>
 
-    <!-- ============ 바퀴 (ros2_control 매칭용, Webots 생성 URDF에서 가져옴) ============ -->
+    <!-- ============ 바퀴 (Webots 생성 URDF에서 가져옴) ============ -->
+    <!-- 조인트 이름 = Webots 모터 이름. mecanum_driver 가 /__NS__/joint_states 로 이 이름들의 위치를
+         발행하고, robot_state_publisher 가 이를 받아 바퀴 링크 TF 를 만든다
+         (기존 joint_state_broadcaster 역할). -->
     <link name="front_left_wheel_link"/>
     <joint name="front_left_wheel" type="continuous">
         <parent link="base_link"/>
@@ -70,26 +84,4 @@
         <axis xyz="0 -1 0"/>
         <origin xyz="-0.1 -0.065 -0.1" rpy="3.14159 0 0"/>
     </joint>
-    <!-- ============ ros2_control (기존: 바퀴 구동, MCU 대체) ============ -->
-    <ros2_control name="WebotsControl" type="system">
-        <hardware>
-            <plugin>webots_ros2_control::Ros2ControlSystem</plugin>
-        </hardware>
-        <joint name="front_left_wheel">
-            <state_interface name="position"/>
-            <command_interface name="velocity"/>
-        </joint>
-        <joint name="front_right_wheel">
-            <state_interface name="position"/>
-            <command_interface name="velocity"/>
-        </joint>
-        <joint name="rear_left_wheel">
-            <state_interface name="position"/>
-            <command_interface name="velocity"/>
-        </joint>
-        <joint name="rear_right_wheel">
-            <state_interface name="position"/>
-            <command_interface name="velocity"/>
-        </joint>
-    </ros2_control>
 </robot>

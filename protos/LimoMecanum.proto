@@ -1,0 +1,403 @@
+#VRML_SIM R2025a utf8
+# license: Apache License 2.0
+# license url: http://www.apache.org/licenses/LICENSE-2.0
+# LIMO 메카넘(전방향) 모드 모델.
+# LimoFourDiff.proto(차동, AgileX limo_four_diff.urdf 추출본)를 바탕으로 바퀴 물리만 수정
+# 차체·센서·치수·질량은 LimoFourDiff 와 동일
+#
+# [메카넘 구현 방식] Webots 공식 KUKA youBot / REC Fabtino 와 같은 '비대칭 마찰' 방식
+#   - 바퀴 충돌체는 기존과 같은 실린더 (롤러를 물리적으로 모델링하지 않음)
+#   - 바퀴마다 contactMaterial 을 대각선으로 나눠 지정
+#       FR·RL = "InteriorWheelMat",  FL·RR = "ExteriorWheelMat"   (youBot Youbot.proto 와 동일 배치)
+#   - 월드의 WorldInfo.contactProperties 가 두 재질에 [0, 2, 0] 마찰 + ±45° frictionRotation 을 준다
+#     (worlds/limo_10x10.wbt). 이 ±45° 가 실제 메카넘 롤러의 45° 를 대체
+#
+# [LimoFourDiff 대비 변경점]
+#   1) 오른쪽 바퀴 endPoint Solid 의 X축 180° 회전 제거.
+#      비대칭 마찰 방향은 바퀴 Solid 의 로컬 좌표계를 따르므로, 오른쪽만 뒤집혀 있으면
+#      ±45° 가 좌우에서 거울상이 되어 재질 배치가 사실상 뒤바뀐다. youBot 처럼 네 바퀴의
+#      로컬 좌표계를 같게 맞춘다. 대신 외관은 visual 을 Pose(180°)로 감싸 원본과 동일하게,
+#      충돌 실린더는 translation 부호를 바꿔 원본과 같은 위치(바깥쪽)에 둔다.
+#   2) boundingObject 회전을 youBot 과 같은 1 0 0 -1.5708 로 통일 (실린더라 형상은 동일).
+#   3) contactMaterial 을 PROTO 필드로 노출 -> 월드에서 proto 수정 없이 재질 교체 가능.
+#   4) 모터 maxVelocity 를 명시 (mecanum_driver 가 이 값을 읽어 방향 보존 포화에 사용).
+#   HingeJoint 축(+Y)과 모터·센서 이름은 그대로 -> 양수 속도 = 전진 (youBot 과 같은 부호 규약).
+
+PROTO LimoMecanum [
+  field  SFVec3f     translation     0 0 0
+  field  SFRotation  rotation        0 0 1 0
+  field  SFString    name            "LimoMecanum"   # Is `Robot.name`.
+  field  SFString    controller      "<extern>"          # Is `Robot.controller`.
+  field  MFString    controllerArgs  []              # Is `Robot.controllerArgs`.
+  field  SFString    customData      ""              # Is `Robot.customData`.
+  field  SFBool      supervisor      FALSE           # Is `Robot.supervisor`.
+  field  SFBool      synchronization TRUE            # Is `Robot.synchronization`.
+  field  SFBool      selfCollision   FALSE           # Is `Robot.selfCollision`.
+  field  MFNode     extensionSlot   []              # Extends the robot with new nodes.
+  # 메카넘 바퀴 재질 (대각선 쌍이 같은 재질). 옆이동 방향이 반대로 나오면 두 쌍을 서로 맞바꾼다.
+  field  SFString    frontLeftWheelMaterial   "ExteriorWheelMat"
+  field  SFString    frontRightWheelMaterial  "InteriorWheelMat"
+  field  SFString    rearLeftWheelMaterial    "InteriorWheelMat"
+  field  SFString    rearRightWheelMaterial   "ExteriorWheelMat"
+  field  SFFloat     wheelMaxVelocity         10       # 모터 최대 각속도 [rad/s] (Webots 기본값)
+]
+{
+  Robot {
+    translation IS translation
+    rotation IS rotation
+    controller IS controller
+    controllerArgs IS controllerArgs
+    customData IS customData
+    supervisor IS supervisor
+    synchronization IS synchronization
+    selfCollision IS selfCollision
+        children [
+          Group {
+            children IS extensionSlot
+          }
+          Pose {
+            translation 0.000000 0.000000 -0.150000
+            rotation 0.000000 0.000000 1.000000 1.570800
+            children [
+              DEF limo_base_visual CadShape {
+                url "meshes/limo_base.dae"
+              }
+            ]
+          }
+          Solid {
+            name "inertial_link"
+            physics Physics {
+              density -1
+              mass 2.155700
+              centerOfMass [ 0.000000 0.000000 0.000000 ]
+              inertiaMatrix [
+                2.400000e-01 9.600000e-01 9.600000e-01
+                0.000000e+00 0.000000e+00 0.000000e+00
+              ]
+            }
+          }
+          Solid {
+            # 지면 위 0.111 m (AgileX 공식 Gazebo limo_four_diff.xacro 의 laser 위치와 동일).
+            # controllers/limo.urdf 의 laser_joint 와 반드시 같아야 한다
+            # (여기는 실제 광선이 나가는 위치, URDF 는 그 스캔을 해석하는 TF).
+            translation 0.103000 0.000000 -0.034000
+            children [
+              Shape {
+                appearance PBRAppearance {
+                  baseColor 0.500000 0.500000 0.500000
+                  roughness 1.000000
+                  metalness 0
+                }
+                geometry Cylinder {
+                  radius 0.02
+                  height 0.01
+                }
+              }
+              Lidar {
+                name "laser"
+                fieldOfView 6.283180
+                horizontalResolution 120
+                numberOfLayers 1
+                near 0.300000
+                minRange 0.300000
+                maxRange 15.000000
+                noise 0.000667
+                resolution 0.015000
+              }
+            ]
+            name "laser_link"
+            boundingObject Cylinder {
+              radius 0.032
+              height 0.016
+            }
+            physics Physics {
+              density -1
+              mass 0.100000
+              centerOfMass [ 0.000000 0.000000 0.000000 ]
+              inertiaMatrix [
+                1.000000e-06 1.000000e-06 1.000000e-06
+                0.000000e+00 0.000000e+00 0.000000e+00
+              ]
+            }
+          }
+          Solid {
+            translation 0.084000 0.000000 0.030000
+            children [
+              Shape {
+                appearance PBRAppearance {
+                  baseColor 0.500000 0.500000 0.500000
+                  roughness 1.000000
+                  metalness 0
+                }
+                geometry Box {
+                   size 0.020000 0.060000 0.015000
+                }
+              }
+              Pose {
+                translation 0 0 0
+                rotation 0.577350 -0.577350 0.577350 2.094395
+                children [
+                  RangeFinder {
+                    name "sensor_camera"
+                    fieldOfView 1.396263
+                    width 640
+                    height 480
+                    near 0.020000
+                    minRange 0.020000
+              }
+            ]
+          }
+          ]
+            name "depth_camera_link"
+            boundingObject Box {
+               size 0.020000 0.060000 0.015000
+            }
+            physics Physics {
+              density -1
+              mass 0.100000
+              centerOfMass [ 0.000000 0.000000 0.000000 ]
+              inertiaMatrix [
+                1.000000e-06 1.000000e-06 1.000000e-06
+                0.000000e+00 0.000000e+00 0.000000e+00
+              ]
+            }
+          }
+          Solid {
+            translation 0.000000 0.000000 -0.100000
+            children [
+              Shape {
+                appearance PBRAppearance {
+                  baseColor 0.500000 0.500000 0.500000
+                  roughness 1.000000
+                  metalness 0
+                }
+                geometry Box {
+                   size 0.001000 0.001000 0.001000
+                }
+              }
+              InertialUnit {
+                name "imu inertial"
+              }
+              Accelerometer {
+                name "imu accelerometer"
+              }
+              Gyro {
+                name "imu gyro"
+              }
+              Compass {
+                name "imu compass"
+              }
+              GPS {
+                name "gps"
+              }
+            ]
+            name "imu_link"
+            boundingObject Box {
+               size 0.001000 0.001000 0.001000
+            }
+            physics Physics {
+              density -1
+              mass 0.010000
+              centerOfMass [ 0.000000 0.000000 0.000000 ]
+              inertiaMatrix [
+                1.000000e-07 1.000000e-07 1.000000e-07
+                0.000000e+00 0.000000e+00 0.000000e+00
+              ]
+            }
+          }
+          HingeJoint {
+            jointParameters HingeJointParameters {
+              axis 0.000000 1.000000 0.000000
+              anchor 0.100000 0.065000 -0.100000
+            }
+            device [
+              RotationalMotor {
+                name "front_left_wheel"
+                maxVelocity IS wheelMaxVelocity
+                maxTorque 10000
+              }
+              PositionSensor {
+                name "front_left_wheel_sensor"
+              }
+            ]
+            endPoint Solid {
+              translation 0.100000 0.065000 -0.100000
+              children [
+                DEF limo_wheel_visual CadShape {
+                  url "meshes/limo_wheel.dae"
+                }
+              ]
+              name "front_left_wheel_link"
+              contactMaterial IS frontLeftWheelMaterial
+              boundingObject Pose {
+                translation 0.000000 0.022500 0.000000
+                rotation 1 0 0 -1.5708
+                children [
+                  Cylinder {
+                    radius 0.045
+                    height 0.045
+                  }
+                ]
+              }
+              physics Physics {
+                density -1
+                mass 0.500000
+                centerOfMass [ 0.000000 0.000000 0.000000 ]
+                inertiaMatrix [
+                  1.055000e-02 7.500000e-04 1.055000e-02
+                  0.000000e+00 0.000000e+00 0.000000e+00
+                ]
+              }
+            }
+          }
+          HingeJoint {
+            jointParameters HingeJointParameters {
+              axis 0.000000 1.000000 0.000000
+              anchor 0.100000 -0.065000 -0.100000
+            }
+            device [
+              RotationalMotor {
+                name "front_right_wheel"
+                maxVelocity IS wheelMaxVelocity
+                maxTorque 10000
+              }
+              PositionSensor {
+                name "front_right_wheel_sensor"
+              }
+            ]
+            endPoint Solid {
+              translation 0.100000 -0.065000 -0.100000
+              children [
+                # 외관은 원본(LimoFourDiff)과 동일하게: 바퀴 메시만 X축 180° 뒤집어 표시
+                Pose {
+                  rotation 1 0 0 3.14159
+                  children [
+                    USE limo_wheel_visual
+                  ]
+                }
+              ]
+              name "front_right_wheel_link"
+              contactMaterial IS frontRightWheelMaterial
+              boundingObject Pose {
+                translation 0.000000 -0.022500 0.000000
+                rotation 1 0 0 -1.5708
+                children [
+                  Cylinder {
+                    radius 0.045
+                    height 0.045
+                  }
+                ]
+              }
+              physics Physics {
+                density -1
+                mass 0.500000
+                centerOfMass [ 0.000000 0.000000 0.000000 ]
+                inertiaMatrix [
+                  1.055000e-02 7.500000e-04 1.055000e-02
+                  0.000000e+00 0.000000e+00 0.000000e+00
+                ]
+              }
+            }
+          }
+          HingeJoint {
+            jointParameters HingeJointParameters {
+              axis 0.000000 1.000000 0.000000
+              anchor -0.100000 0.065000 -0.100000
+            }
+            device [
+              RotationalMotor {
+                name "rear_left_wheel"
+                maxVelocity IS wheelMaxVelocity
+                maxTorque 10000
+              }
+              PositionSensor {
+                name "rear_left_wheel_sensor"
+              }
+            ]
+            endPoint Solid {
+              translation -0.100000 0.065000 -0.100000
+              children [
+                USE limo_wheel_visual
+              ]
+              name "rear_left_wheel_link"
+              contactMaterial IS rearLeftWheelMaterial
+              boundingObject Pose {
+                translation 0.000000 0.022500 0.000000
+                rotation 1 0 0 -1.5708
+                children [
+                  Cylinder {
+                    radius 0.045
+                    height 0.045
+                  }
+                ]
+              }
+              physics Physics {
+                density -1
+                mass 0.500000
+                centerOfMass [ 0.000000 0.000000 0.000000 ]
+                inertiaMatrix [
+                  1.055000e-02 7.500000e-04 1.055000e-02
+                  0.000000e+00 0.000000e+00 0.000000e+00
+                ]
+              }
+            }
+          }
+          HingeJoint {
+            jointParameters HingeJointParameters {
+              axis 0.000000 1.000000 0.000000
+              anchor -0.100000 -0.065000 -0.100000
+            }
+            device [
+              RotationalMotor {
+                name "rear_right_wheel"
+                maxVelocity IS wheelMaxVelocity
+                maxTorque 10000
+              }
+              PositionSensor {
+                name "rear_right_wheel_sensor"
+              }
+            ]
+            endPoint Solid {
+              translation -0.100000 -0.065000 -0.100000
+              children [
+                # 외관은 원본(LimoFourDiff)과 동일하게: 바퀴 메시만 X축 180° 뒤집어 표시
+                Pose {
+                  rotation 1 0 0 3.14159
+                  children [
+                    USE limo_wheel_visual
+                  ]
+                }
+              ]
+              name "rear_right_wheel_link"
+              contactMaterial IS rearRightWheelMaterial
+              boundingObject Pose {
+                translation 0.000000 -0.022500 0.000000
+                rotation 1 0 0 -1.5708
+                children [
+                  Cylinder {
+                    radius 0.045
+                    height 0.045
+                  }
+                ]
+              }
+              physics Physics {
+                density -1
+                mass 0.500000
+                centerOfMass [ 0.000000 0.000000 0.000000 ]
+                inertiaMatrix [
+                  1.055000e-02 7.500000e-04 1.055000e-02
+                  0.000000e+00 0.000000e+00 0.000000e+00
+                ]
+              }
+            }
+          }
+        ]
+        name "base_link"
+        name IS name
+        boundingObject Box {
+           size 0.130000 0.120000 0.100000
+        }
+        physics Physics {
+        }
+      }   
+  }

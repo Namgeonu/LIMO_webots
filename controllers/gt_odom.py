@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """LIMO GT(Ground-Truth) odom 플러그인.
 
-webots_ros2_control(바퀴 구동) 옆에 이 커스텀 플러그인을 함께 붙여,
+mecanum_driver(바퀴 구동 플러그인) 옆에 이 커스텀 플러그인을 함께 붙여,
 plugin 내부에서 getDevice 로 gps(위치) + inertial_unit(방향)을 직접 읽어
 계산 없이 정확한 odom + odom->base_link TF 를 발행한다.
+바퀴 엔코더 odom 을 쓰지 않음
+GPS·IMU 는 '어떻게 움직였는지'와 무관하게 결과만 재므로 메카넘에서도 그대로 정확하다.
 
 InertialUnit 은 quaternion 을 그대로 주므로 방향 계산이 전혀 없음.
 """
@@ -16,12 +18,9 @@ from nav_msgs.msg import Odometry
 from geometry_msgs.msg import TransformStamped, Quaternion
 from tf2_ros import TransformBroadcaster
 
-# base_link(=LimoFourDiff proto 원점)의 지면 위 높이.
+# base_link(=LimoMecanum proto 원점, 치수는 LimoFourDiff 와 동일)의 지면 위 높이.
 # proto 기준 바퀴 중심이 z=-0.100, 바퀴 반경이 0.045 이므로 지면은 원점에서 -0.145.
-# 예전에는 여기를 0.0 으로 발행했는데, 그러면 TF 상 laser_link 가
-# 0.0 + (-0.034) = -0.034 즉 지면 아래로 계산된다. Nav2 ObstacleLayer 의
-# min_obstacle_height 기본값이 0.0 이라 라이다 관측점이 전량 폐기되어
-# costmap 에 장애물이 하나도 찍히지 않았다 (리모가 서로 들이받던 원인).
+
 BASE_LINK_Z = 0.145
 
 
@@ -64,11 +63,14 @@ class GTOdom:
         q = self.imu.getQuaternion()             # [x, y, z, w]
 
         # --- 속도 (twist, base_link 기준) ---
-        # GPS getSpeedVector 는 월드 좌표계 속도 → 로봇 heading(yaw)에 투영해 base_link 전진속도로.
-        # 차동구동이라 옆이동(linear.y)=0, 각속도는 gyro z 그대로.
+        # GPS getSpeedVector 는 월드 좌표계 속도 → 로봇 heading(yaw)으로 회전시켜 base_link 기준으로.
+        #   전진(x) = 월드속도를 로봇 정면 방향으로 투영
+        #   측면(y) = 월드속도를 로봇 왼쪽 방향으로 투영  (메카넘 옆이동. Nav2 MPPI 가 현재 속도로 사용)
+        # 각속도는 gyro z 그대로.
         vx_w, vy_w, _vz = self.gps.getSpeedVector()
         yaw = math.atan2(2.0 * q[3] * q[2], 1.0 - 2.0 * q[2] * q[2])
         v_forward = vx_w * math.cos(yaw) + vy_w * math.sin(yaw)
+        v_lateral = -vx_w * math.sin(yaw) + vy_w * math.cos(yaw)
         wz = self.gyro.getValues()[2]
 
         # Webots 시뮬 시각으로 스탬프 (Ros2Supervisor의 /clock 과 동일 기준).
@@ -86,9 +88,9 @@ class GTOdom:
         odom.pose.pose.position.y = y
         odom.pose.pose.position.z = BASE_LINK_Z
         odom.pose.pose.orientation = Quaternion(x=q[0], y=q[1], z=q[2], w=q[3])
-        # twist: base_link 기준 전진속도 + 각속도 (차동구동: linear.y=0)
+        # twist: base_link 기준 전진·측면 속도 + 각속도 (메카넘: linear.y 실제값)
         odom.twist.twist.linear.x = v_forward
-        odom.twist.twist.linear.y = 0.0
+        odom.twist.twist.linear.y = v_lateral
         odom.twist.twist.angular.z = wz
         self.odom_pub.publish(odom)
 

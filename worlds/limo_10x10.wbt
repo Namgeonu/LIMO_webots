@@ -3,15 +3,45 @@
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackground.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/floors/protos/RectangleArena.proto"
-EXTERNPROTO "../protos/LimoFourDiff.proto"
+EXTERNPROTO "../protos/LimoMecanum.proto"
 
 WorldInfo {
   info [
-    "LIMO 단독 검증 월드: 10x10 m 아레나에 LimoFourDiff 한 대"
-    "라이다는 AgileX 공식 높이(지면 위 0.111 m). 드라이버는 limo.launch.py (webots_ros2_driver + ros2_control + Nav2)"
+    "LIMO 월드: 10x10 m 아레나에 LimoMecanum(메카넘/전방향 모드) 한 대"
+    "라이다는 AgileX 공식 높이(지면 위 0.111 m). 드라이버는 limo.launch.py (webots_ros2_driver + mecanum_driver + Nav2 MPPI)"
   ]
-  title "LIMO webots (single)"
+  title "LIMO webots (single, mecanum)"
   basicTimeStep 2
+  # 메카넘 바퀴 비대칭 마찰. Webots 공식 KUKA youBot 월드(projects/robots/kuka/youbot/worlds/youbot.wbt)의 값 가져옴.
+  # 재질 이름은 LimoMecanum.proto 의 바퀴 contactMaterial 과 일치해야 한다.
+  #   coulombFriction [0, 2, 0] : 바퀴 구름 방향 마찰 0, 그와 직교 방향 마찰 2 (이방성)
+  #   frictionRotation ±0.785398 : 그 마찰 방향을 ±45° 회전 -> 메카넘 롤러 45° 를 대신함
+  #   forceDependentSlip [10, 0] : 하중 비례 미끄러짐. youBot(약 20 kg) 기준값이라 LIMO(약 4~5 kg)에서는
+  #                                측면 효율을 보며 튜닝 대상 (/limo/odom 과 /limo/wheel_twist_debug 의 linear.y 비교)
+  contactProperties [
+    ContactProperties {
+      material1 "InteriorWheelMat"
+      coulombFriction [
+        0, 2, 0
+      ]
+      frictionRotation -0.785398 0
+      bounce 0
+      forceDependentSlip [
+        10, 0
+      ]
+    }
+    ContactProperties {
+      material1 "ExteriorWheelMat"
+      coulombFriction [
+        0, 2, 0
+      ]
+      frictionRotation 0.785398 0
+      bounce 0
+      forceDependentSlip [
+        10, 0
+      ]
+    }
+  ]
 }
 Viewpoint {
   orientation 0.028229702261606218 0.9978139463222574 0.05975292825480734 0.3367161913867963
@@ -26,7 +56,7 @@ RectangleArena {
   floorTileSize 1 1
   wallHeight 0.05
 }
-LimoFourDiff {
+LimoMecanum {
   translation -3 0 0.145
   name "limo"
 }

@@ -1,28 +1,14 @@
 # ==========================================================================
-# LIMO Nav2 파라미터 (LIMO 단독, 빈 지도, 차동구동)
+# LIMO Nav2 파라미터 (LIMO 단독, 빈 지도, 메카넘/전방향 모드)
 # ==========================================================================
 #
-# 대상: ROS 2 Humble / Ubuntu 22.04.  (Jazzy 기준에서 이식 완료)
+# 대상: ROS 2 Humble / Ubuntu 22.04. 
 #
-# Jazzy -> Humble 로 바뀐 부분. 아래 값은 모두 Humble 설치본에서 확인한 것:
 #
-# [1] enable_stamped_cmd_vel : Jazzy 전용 파라미터라 Humble 에는 없음 -> 삭제함.
-#     Humble Nav2 는 일반 Twist 를 /cmd_vel 로 발행하고,
-#     Humble DiffDriveController 는 use_stamped_vel: false 에서 일반 Twist 를 받으므로
-#     "타입"은 저절로 맞는다. 다만 그때 구독하는 토픽 "이름"이 ~/cmd_vel 이 아니라
-#     ~/cmd_vel_unstamped 로 바뀐다 -> limo_driver.launch.py 의 remap 이 이어준다.
-#     (webots_ros2 공식 예제 turtlebot/tiago/epuck/husarion 과 동일한 배선)
-#
-# [2] progress_checker_plugin : Humble 은 단수형 문자열. (Jazzy 는 복수형 리스트)
-#
-# [3] behavior_server : Humble 은 costmap_topic / footprint_topic 을 하나씩만 받는다.
-#     (Jazzy 의 local_costmap_topic / global_costmap_topic / local_frame 없음)
-#     또 여기서의 global_frame 은 "복구 동작이 도는 기준 프레임"이라 map 이 아니라 odom.
-#
-# [4] 플러그인 등록 이름 : Humble 은 슬래시 표기 (nav2_behaviors/Spin,
-#     nav2_navfn_planner/NavfnPlanner). Jazzy 는 콜론 표기.
-#     단 nav2_controller::SimpleGoalChecker 계열과 dwb_core::DWBLocalPlanner 는
-#     plugins.xml 에 name 속성이 없어 type 이 곧 이름 -> Humble 도 콜론 표기 그대로.
+# 메카넘(전방향) 전환: controller_server 의 FollowPath 를 DWB -> MPPI(motion_model: Omni).
+# MPPI 파라미터 이름은 navigation2 humble 브랜치 nav2_mppi_controller 소스에서 확인한 것.
+# (설치: sudo apt install ros-humble-nav2-mppi-controller)
+# 나머지 서버(bt_navigator, planner, costmap, behavior)는 차동 버전과 동일.
 #
 # ==========================================================================
 
@@ -35,11 +21,12 @@ bt_navigator:
     bt_loop_duration: 10
     default_server_timeout: 20
 
-# --- Controller Server: 경로 추종 -> /cmd_vel 생성 ---
+# --- Controller Server: 경로 추종 -> /cmd_vel(vx, vy, wz) 생성 ---
 controller_server:
   ros__parameters:
-    controller_frequency: 20.0
+    controller_frequency: 20.0        # MPPI model_dt(0.05) = 1 / 20 Hz 와 맞춤
     min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.001   # 메카넘: odom 의 옆 속도(linear.y)도 현재 속도로 사용
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
     progress_checker_plugin: "progress_checker"   # Humble: 단수형 문자열
@@ -51,45 +38,92 @@ controller_server:
       movement_time_allowance: 10.0
     goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.25
-      yaw_goal_tolerance: 6.28   # 도착 헤딩 무관 (맴돌기 방지, skid-steer 특성 고려)
+      xy_goal_tolerance: 0.15
+      # 전방향은 이동 중에도 헤딩을 따로 맞출 수 있으므로 목표 헤딩을 지킨다.
+      # (차동 버전은 맴돌기 방지로 6.28 = 헤딩 무시였음)
+      # 헤딩을 끝까지 고정하고 싶으면 목표 orientation 을 현재 헤딩과 같게 보낸다.
+      yaw_goal_tolerance: 0.15
       stateful: True
-    # 공식 AgileX LIMO 와 동일: 순수 DWB (RotationShim 미사용).
-    # GT odom 이 정확한 위치·방향을 주므로 DWB 만으로 제어.
+
+    # ---------------- MPPI (Nav2 공식 예측 제어기, 전방향 지원) ----------------
+    # 헤딩 고정 + 옆·대각 이동을 만드는 세 가지 설정:
+    #   (1) motion_model: "Omni" + vy_max > 0  -> vy 를 샘플링해 옆·대각 궤적 생성
+    #   (2) TwirlingCritic 추가               -> 이동 중 불필요한 yaw 회전에 벌점 (헤딩 유지)
+    #   (3) PreferForwardCritic / PathAngleCritic 제외
+    #       -> 둘 다 '정면으로 경로를 향해 가라'는 차동식 선호라 옆이동·헤딩 고정과 충돌
+    # 결과: 이동 중에는 헤딩을 유지한 채 옆·대각으로 가고, 목표 0.5 m 안에서
+    #       GoalAngleCritic 이 목표 헤딩으로 맞춘다.
     FollowPath:
-      plugin: "dwb_core::DWBLocalPlanner"
-      # --- 차동구동 속도 제한 (LIMO 실물 스펙: max 0.2 m/s 근처) ---
-      min_vel_x: 0.0
-      min_vel_y: 0.0          # 차동구동은 옆이동 0
-      max_vel_x: 0.22
-      max_vel_y: 0.0
-      max_vel_theta: 1.0
-      min_speed_xy: 0.0
-      max_speed_xy: 0.22
-      min_speed_theta: 0.0
-      acc_lim_x: 2.5
-      acc_lim_theta: 3.2
-      decel_lim_x: -2.5
-      decel_lim_theta: -3.2
-      vx_samples: 20
-      vtheta_samples: 20
-      sim_time: 1.7
-      # 차동구동: 제자리 회전 허용
-      xy_goal_tolerance: 0.25
-      trans_stopped_velocity: 0.25
-      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign",
-                "PathAlign", "PathDist", "GoalDist"]
-      # --- 공식 AgileX limo_ros2 navigation2.yaml 의 critic 가중치 (누락분 보충) ---
-      BaseObstacle.scale: 0.02
-      PathAlign.scale: 32.0
-      PathAlign.forward_point_distance: 0.1
-      GoalAlign.scale: 24.0
-      GoalAlign.forward_point_distance: 0.1
-      PathDist.scale: 32.0
-      GoalDist.scale: 24.0
-      RotateToGoal.scale: 32.0
-      RotateToGoal.slowing_factor: 5.0
-      RotateToGoal.lookahead_time: -1.0
+      plugin: "nav2_mppi_controller::MPPIController"
+      motion_model: "Omni"
+      time_steps: 56
+      model_dt: 0.05
+      batch_size: 1000               # 시뮬 부하 고려 (공식 예시 2000)
+      iteration_count: 1
+      temperature: 0.3
+      gamma: 0.015
+      # --- 속도 한계: LIMO 실물 스펙(약 0.2 m/s) 기준. 옆 속도는 전진보다 낮게 (실물 메카넘 특성) ---
+      #     mecanum_driver 의 안전 상한(limo.urdf: maxVx 0.3, maxVy 0.2, maxWz 1.5)보다 작게 둔다.
+      vx_max: 0.22
+      vx_min: -0.22                  # 전방향: 후진도 정상 이동
+      vy_max: 0.15                   # 좌우 각각 최대
+      wz_max: 1.0
+      # --- 샘플링 폭 (클수록 과감한 궤적 탐색) ---
+      vx_std: 0.2
+      vy_std: 0.2
+      wz_std: 0.4
+      prune_distance: 1.7
+      transform_tolerance: 0.1
+      reset_period: 1.0
+      retry_attempt_limit: 1
+      visualize: false
+      critics: ["ConstraintCritic", "ObstaclesCritic", "GoalCritic", "GoalAngleCritic",
+                "PathAlignCritic", "PathFollowCritic", "TwirlingCritic"]
+      ConstraintCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.0
+      ObstaclesCritic:
+        enabled: true
+        cost_power: 1
+        repulsion_weight: 1.5
+        critical_weight: 20.0
+        consider_footprint: false    # robot_radius 사용
+        collision_cost: 10000.0
+        collision_margin_distance: 0.1
+        near_goal_distance: 0.5
+        # 아래 두 값은 costmap inflation_layer 와 반드시 같아야 한다
+        inflation_radius: 0.55
+        cost_scaling_factor: 3.0
+      GoalCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        threshold_to_consider: 1.4
+      GoalAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.0
+        threshold_to_consider: 0.5
+      PathAlignCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 14.0
+        max_path_occupancy_ratio: 0.05
+        trajectory_point_step: 3
+        threshold_to_consider: 0.5
+        offset_from_furthest: 20
+        use_path_orientations: false   # 경로의 방향이 아니라 위치만 따라감 (헤딩 고정)
+      PathFollowCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        offset_from_furthest: 5
+        threshold_to_consider: 1.4
+      TwirlingCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 10.0            # 헤딩 유지 강도. 이동 중 머리가 돌면 올리고, 목표 헤딩 맞추기가 느리면 내림
 
 # --- Global Costmap: 전역 지도 (빈 지도) ---
 global_costmap:

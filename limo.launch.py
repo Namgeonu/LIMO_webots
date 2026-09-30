@@ -1,11 +1,16 @@
-"""LIMO 단독 Webots 스택 launch (Supervisor + 드라이버 + ros2_control + Nav2).
+"""LIMO 단독 Webots 스택 launch (Supervisor + 드라이버 + Nav2) — 메카넘(전방향) 모드.
+
+구동은 URDF 에 선언된 두 webots_ros2_driver 플러그인이 맡는다 (ros2_control 미사용).
+  - mecanum_driver.MecanumDriver : /{ns}/cmd_vel(vx, vy, wz) -> 메카넘 IK -> 바퀴 4개, /{ns}/joint_states
+  - gt_odom.GTOdom               : GPS + InertialUnit -> /{ns}/odom, odom->base_link TF
+Nav2 controller_server 는 MPPI(motion_model: Omni) 로 옆·대각 이동(vy)을 포함한 cmd_vel 을 만든다.
 
 Ros2Supervisor 도 여기서 함께 띄운다 (Supervisor 가 없으면 /clock 이 나오지 않아 시뮬이 진행되지 않는다).
 
 사용:
-  webots ~/LIMO_webots/worlds/limo_10x10.wbt          # 먼저 월드
-  source ~/LIMO_webots/setup_env.sh
-  ros2 launch ~/LIMO_webots/limo.launch.py             # robots:=limo (월드의 로봇 name 과 일치)
+  webots ~/LIMO_webots_omni/worlds/limo_10x10.wbt          # 먼저 월드
+  source ~/LIMO_webots_omni/setup_env.sh
+  ros2 launch ~/LIMO_webots_omni/limo.launch.py        # robots:=limo (월드의 로봇 name 과 일치)
 
 Nav2 목표 보내기:
   ros2 action send_goal /limo/navigate_to_pose nav2_msgs/action/NavigateToPose \
@@ -19,11 +24,9 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from webots_ros2_driver.webots_controller import WebotsController
 from webots_ros2_driver.webots_launcher import Ros2SupervisorLauncher
-from webots_ros2_driver.wait_for_controller_connection import WaitForControllerConnection
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 URDF_TPL = os.path.join(ROOT, 'controllers', 'limo.urdf')        # __NS__ 자리표시자
-ROS2CONTROL = os.path.join(ROOT, 'config', 'limo_ros2control.yaml')
 NAV2_SRC = os.path.join(ROOT, 'config', 'limo_nav2_params.yaml')
 
 
@@ -66,26 +69,18 @@ def make_limo_stack(ns):
         namespace=ns, output='screen',
         parameters=[{'robot_description': robot_desc, 'frame_prefix': f'{ns}/', 'use_sim_time': True}])
 
+    # 드라이버: URDF 의 플러그인(mecanum_driver, gt_odom)을 로드한다.
+    # mecanum_driver 가 /{ns}/cmd_vel 을 직접 구독하므로 cmd_vel remap 이 필요 없고
+    # (기존 diffdrive_controller/cmd_vel_unstamped remap 삭제), 컨트롤러 스포너도 없다.
     driver = WebotsController(
         robot_name=ns, namespace=ns,
         parameters=[
             {'robot_description': urdf, 'set_robot_state_publisher': False, 'use_sim_time': True},
-            ROS2CONTROL,
         ],
         remappings=[
-            # Humble: use_stamped_vel=false 이면 DiffDriveController 구독 이름이 ~/cmd_vel_unstamped
-            (f'/{ns}/diffdrive_controller/cmd_vel_unstamped', f'/{ns}/cmd_vel'),
-            (f'/{ns}/diffdrive_controller/odom', f'/{ns}/_unused_odom_encoder'),
             (f'/{ns}/laser', f'/{ns}/scan'),
         ],
         respawn=True)
-
-    cm_timeout = ['--controller-manager-timeout', '50']
-    jsb = Node(package='controller_manager', executable='spawner', namespace=ns, output='screen',
-               arguments=['joint_state_broadcaster', '-c', f'/{ns}/controller_manager'] + cm_timeout)
-    ddc = Node(package='controller_manager', executable='spawner', namespace=ns, output='screen',
-               arguments=['diffdrive_controller', '-c', f'/{ns}/controller_manager'] + cm_timeout)
-    waiting = WaitForControllerConnection(target_driver=driver, nodes_to_start=[jsb, ddc])
 
     static_map_odom = Node(
         package='tf2_ros', executable='static_transform_publisher',
@@ -112,7 +107,7 @@ def make_limo_stack(ns):
                                     'behavior_server', 'bt_navigator']}])
     nav2_delayed = TimerAction(period=12.0, actions=nav2_nodes + [lifecycle])
 
-    return [rsp, driver, waiting, static_map_odom, nav2_delayed]
+    return [rsp, driver, static_map_odom, nav2_delayed]
 
 
 def launch_setup(context):

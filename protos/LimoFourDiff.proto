@@ -35,7 +35,7 @@ PROTO LimoFourDiff [
             rotation 0.000000 0.000000 1.000000 1.570800
             children [
               DEF limo_base_visual CadShape {
-                url "meshes/limo_base.dae"
+                url "meshes/limo_base_light.dae"
               }
             ]
           }
